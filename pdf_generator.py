@@ -67,8 +67,8 @@ def generate_improved_resume(original_resume_text, improvement_suggestions):
     Return ONLY the improved resume text with section headers, no additional explanations.
     """
     
-    # Generate improved resume content using Gemini API
-    model = genai.GenerativeModel('gemini-pro')
+    # Generate improved resume content using Gemini API - UPDATED MODEL NAME
+    model = genai.GenerativeModel('gemini-1.5-pro')  # Updated from 'gemini-pro' to 'gemini-1.5-pro'
     response = model.generate_content(prompt)
     
     # Extract improved resume text

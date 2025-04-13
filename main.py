@@ -37,10 +37,17 @@ def main():
         with st.expander("Resume Text Preview"):
             st.text(resume_text[:1000] + ("..." if len(resume_text) > 1000 else ""))
         
-        # Analyze the resume with Gemini API
-        if st.button("Analyze Resume"):
+        # Use a form to ensure proper state management with the button
+        with st.form(key="analysis_form"):
+            submit_button = st.form_submit_button(label="Analyze Resume")
+            
+        # Analyze the resume with Gemini API when button is clicked
+        if submit_button:
             with st.spinner("Analyzing your resume with AI..."):
                 try:
+                    # Clear any previous output
+                    st.empty()
+                    
                     analysis_result = analyze_resume(resume_text)
                     
                     # Display analysis results
