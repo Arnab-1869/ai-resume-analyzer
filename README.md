@@ -2,7 +2,7 @@
 
 AI Resume Analyzer is a smart web app built with **Python**, **Streamlit**, and **Gemini API** that helps users improve their resumes using AI. It analyzes uploaded resumes and provides **personalized feedback**, **job recommendations**, and even generates an **improved resume** based on suggestions.
 
-🌐 **Live Demo**: [https://arnab-1869-ai-resume-analyzer.streamlit.app/](https://arnab-1869-ai-resume-analyzer.streamlit.app/)
+🌐 **Live Demo**: https://ai-resume-analyzer-puqpqqcgmze6q9zvasczsw.streamlit.app/
 
 ---
 
