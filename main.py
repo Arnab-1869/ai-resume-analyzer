@@ -1,13 +1,17 @@
 import streamlit as st
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 import tempfile
 from analyzer import extract_text_from_file, analyze_resume
 from pdf_generator import generate_improved_resume
 from utils import setup_page, display_analysis_results, display_job_recommendations
+import google.generativeai as genai
 
 # Load environment variables
-load_dotenv()
+# load_dotenv()
+
+api_key = st.secrets["GEMINI_API_KEY"]
+genai.configure(api_key=api_key)
 
 def main():
     # Setup page configuration
