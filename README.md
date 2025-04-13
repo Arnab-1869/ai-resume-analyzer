@@ -33,7 +33,7 @@ AI Resume Analyzer is a smart web app built with **Python**, **Streamlit**, and 
 
 | Upload Resume | Resume Analysis |
 |---------------|------------------|
-| ![Upload Screenshot](screenshots/upload.png) | ![Analysis Screenshot](screenshots/analysis.png) |
+| ![Upload Screenshot](upload.png) | ![Analysis Screenshot](screenshots/analysis.png) |
 
 
 ---
