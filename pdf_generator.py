@@ -2,17 +2,20 @@ import os
 import tempfile
 from fpdf import FPDF
 import google.generativeai as genai
-from dotenv import load_dotenv
+import streamlit as st
+import traceback
+import json
+import re
 
-# Load environment variables
-load_dotenv()
-
-# Initialize Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-
-class ResumePDF(FPDF):
-    """Custom PDF class for generating improved resumes"""
+class UTF8ResumePDF(FPDF):
+    """Custom PDF class for generating improved resumes with UTF-8 support"""
+    
+    def __init__(self):
+        super().__init__()
+        # Add a default font with UTF-8 support
+        self.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+        self.add_font('DejaVu', 'B', 'DejaVuSansCondensed-Bold.ttf', uni=True)
+        self.add_font('DejaVu', 'I', 'DejaVuSansCondensed-Oblique.ttf', uni=True)
     
     def header(self):
         """Add header to the PDF"""
@@ -39,6 +42,29 @@ class ResumePDF(FPDF):
         self.multi_cell(0, 5, body)
         self.ln(5)
 
+def sanitize_text(text):
+    """
+    Sanitize text for FPDF to handle special characters
+    """
+    # Replace common problematic characters
+    replacements = {
+        '\u2013': '-',  # en-dash
+        '\u2014': '-',  # em-dash
+        '\u2018': "'",  # left single quote
+        '\u2019': "'",  # right single quote
+        '\u201c': '"',  # left double quote
+        '\u201d': '"',  # right double quote
+        '\u2022': '*',  # bullet
+        '\u2026': '...',  # ellipsis
+        '\u00a0': ' ',  # non-breaking space
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    
+    # Replace any other non-Latin1 characters with their closest ASCII equivalent or remove them
+    return re.sub(r'[^\x00-\x7F]+', '', text)
+
 def generate_improved_resume(original_resume_text, improvement_suggestions):
     """
     Generate an improved version of the resume based on AI suggestions.
@@ -50,77 +76,153 @@ def generate_improved_resume(original_resume_text, improvement_suggestions):
     Returns:
         str: Path to the generated PDF file
     """
-    # Create a prompt for Gemini API to rewrite the resume
-    prompt = f"""
-    You are an expert resume writer. Rewrite the following resume by implementing these specific improvements:
-    
-    ORIGINAL RESUME:
-    {original_resume_text}
-    
-    IMPROVEMENTS TO IMPLEMENT:
-    {improvement_suggestions}
-    
-    Please rewrite the entire resume with these improvements while maintaining the same core information.
-    Structure the resume in standard sections: Contact Information, Summary, Experience, Education, Skills.
-    Use bullet points for accomplishments and make them quantifiable where possible.
-    Focus on clarity, conciseness, and professional formatting.
-    Return ONLY the improved resume text with section headers, no additional explanations.
-    """
-    
-    # Generate improved resume content using Gemini API - UPDATED MODEL NAME
-    model = genai.GenerativeModel('gemini-1.5-pro')  # Updated from 'gemini-pro' to 'gemini-1.5-pro'
-    response = model.generate_content(prompt)
-    
-    # Extract improved resume text
-    improved_resume_text = ""
-    if hasattr(response, 'text'):
-        improved_resume_text = response.text
-    else:
-        improved_resume_text = str(response)
-    
-    # Generate PDF with improved resume
-    pdf = ResumePDF()
-    pdf.add_page()
-    
-    # Split improved resume into sections based on typical section headers
-    sections = {}
-    current_section = "Header"
-    sections[current_section] = []
-    
-    section_headers = [
-        "CONTACT INFORMATION", "SUMMARY", "PROFESSIONAL SUMMARY", 
-        "EXPERIENCE", "WORK EXPERIENCE", "EMPLOYMENT HISTORY",
-        "EDUCATION", "SKILLS", "CERTIFICATIONS", "PROJECTS",
-        "AWARDS", "LANGUAGES", "INTERESTS"
-    ]
-    
-    # Parse the improved resume text into sections
-    for line in improved_resume_text.split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-            
-        found_header = False
-        for header in section_headers:
-            if line.upper().startswith(header) or line.upper() == header:
-                current_section = line
-                sections[current_section] = []
-                found_header = True
-                break
-                
-        if not found_header:
-            sections[current_section].append(line)
-    
-    # Add sections to PDF
-    for section, content in sections.items():
-        if content:  # Only add non-empty sections
-            pdf.chapter_title(section)
-            pdf.chapter_body('\n'.join(content))
-    
-    # Save PDF to a temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_filepath = tmp_file.name
+    try:
+        # Format improvement suggestions for the prompt
+        formatted_suggestions = ""
+        if improvement_suggestions and isinstance(improvement_suggestions, list):
+            for i, suggestion in enumerate(improvement_suggestions):
+                category = suggestion.get("category", f"Suggestion {i+1}")
+                current = suggestion.get("current", "")
+                suggested = suggestion.get("suggested_improvement", "")
+                formatted_suggestions += f"- {category}:\n  Current: {current}\n  Suggested: {suggested}\n\n"
+        else:
+            formatted_suggestions = "No specific suggestions provided. Please improve the general formatting, clarity, and professionalism of the resume."
         
-    pdf.output(tmp_filepath)
-    
-    return tmp_filepath
+        # Create a prompt for Gemini API to rewrite the resume
+        prompt = f"""
+        You are an expert resume writer. Rewrite the following resume by implementing these specific improvements:
+        
+        ORIGINAL RESUME:
+        {original_resume_text}
+        
+        IMPROVEMENTS TO IMPLEMENT:
+        {formatted_suggestions}
+        
+        Please rewrite the entire resume with these improvements while maintaining the same core information.
+        Structure the resume in standard sections: Contact Information, Summary, Experience, Education, Skills.
+        Use bullet points for accomplishments and make them quantifiable where possible.
+        Focus on clarity, conciseness, and professional formatting.
+        Return ONLY the improved resume text with section headers, no additional explanations.
+        Use only ASCII characters (no special quotes, dashes, etc.) to ensure compatibility with all systems.
+        """
+        
+        # Get API key from Streamlit secrets 
+        try:
+            api_key = st.secrets["GEMINI_API_KEY"]
+            genai.configure(api_key=api_key)
+        except Exception as e:
+            st.error(f"Error accessing API key: {str(e)}")
+            return None
+        
+        # Generate improved resume content using Gemini API
+        try:
+            model = genai.GenerativeModel('gemini-1.5-pro')
+            response = model.generate_content(prompt)
+        except Exception as e:
+            st.error(f"Error generating content with Gemini API: {str(e)}")
+            st.error(traceback.format_exc())
+            return None
+        
+        # Extract improved resume text
+        try:
+            improved_resume_text = ""
+            if hasattr(response, 'text'):
+                improved_resume_text = response.text
+            else:
+                improved_resume_text = str(response)
+            
+            # Sanitize the text to handle problematic characters
+            improved_resume_text = sanitize_text(improved_resume_text)
+            
+        except Exception as e:
+            st.error(f"Error extracting text from response: {str(e)}")
+            st.error(traceback.format_exc())
+            return None
+        
+        # Use simpler approach with plain text
+        try:
+            # Create a simple single-section PDF
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=11)
+            
+            # Set up page margins
+            pdf.set_auto_page_break(auto=True, margin=15)
+            
+            # Add title
+            pdf.set_font("Arial", 'B', size=16)
+            pdf.cell(0, 10, "Improved Resume", ln=True, align='C')
+            pdf.ln(5)
+            
+            # Reset font to normal
+            pdf.set_font("Arial", size=11)
+            
+            # Convert the text to be PDF-compatible
+            # Split the text into lines to ensure proper line breaks
+            pdf_text = improved_resume_text.encode('latin-1', 'replace').decode('latin-1')
+            
+            # Process each line, adding them to the PDF with proper formatting
+            for line in pdf_text.split('\n'):
+                # Check if line is a header (all caps or ends with colon)
+                if line.isupper() or (line.strip().endswith(':') and len(line) < 30):
+                    pdf.set_font("Arial", 'B', size=12)
+                    pdf.ln(3)  # Add some space before headers
+                    pdf.cell(0, 6, line, ln=True)
+                    pdf.set_font("Arial", size=11)
+                    pdf.ln(2)  # Add some space after headers
+                else:
+                    # Handle bullet points
+                    if line.strip().startswith('•') or line.strip().startswith('-') or line.strip().startswith('*'):
+                        indent = 5
+                        pdf.set_x(pdf.get_x() + indent)
+                        width = pdf.w - pdf.l_margin - pdf.r_margin - indent
+                        pdf.multi_cell(width, 5, line)
+                    else:
+                        pdf.multi_cell(0, 5, line)
+            
+            # Save PDF to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_filepath = tmp_file.name
+            
+            pdf.output(tmp_filepath)
+            return tmp_filepath
+            
+        except Exception as e:
+            st.error(f"Error generating PDF: {str(e)}")
+            st.error(traceback.format_exc())
+            
+            # Last resort - try with extremely basic PDF
+            try:
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=11)
+                
+                # Add only sanitized, basic ASCII text
+                basic_text = re.sub(r'[^\x00-\x7F]+', '', improved_resume_text)
+                
+                # Break into very short chunks to avoid any encoding issues
+                chunks = [basic_text[i:i+50] for i in range(0, len(basic_text), 50)]
+                
+                for chunk in chunks:
+                    try:
+                        pdf.cell(0, 5, chunk, ln=True)
+                    except:
+                        # Skip any problematic chunks
+                        continue
+                        
+                # Save PDF to a temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_filepath = tmp_file.name
+                
+                pdf.output(tmp_filepath)
+                st.warning("Could only generate a simplified version of the resume due to character encoding issues.")
+                return tmp_filepath
+                
+            except Exception as final_e:
+                st.error("Failed to generate PDF.")
+                return None
+            
+    except Exception as e:
+        st.error(f"Unexpected error in generate_improved_resume: {str(e)}")
+        st.error(traceback.format_exc())
+        return None
