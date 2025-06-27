@@ -1,5 +1,3 @@
-import groq
-print("GROQ MODULE PATH:", groq.__file__)
 import os
 import tempfile
 from fpdf import FPDF
