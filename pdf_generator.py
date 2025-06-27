@@ -1,11 +1,15 @@
+import groq
+print("GROQ MODULE PATH:", groq.__file__)
 import os
 import tempfile
 from fpdf import FPDF
-import google.generativeai as genai
 import streamlit as st
 import traceback
 import json
 import re
+from groq import Groq
+
+
 
 class UTF8ResumePDF(FPDF):
     """Custom PDF class for generating improved resumes with UTF-8 support"""
@@ -65,14 +69,13 @@ def sanitize_text(text):
     # Replace any other non-Latin1 characters with their closest ASCII equivalent or remove them
     return re.sub(r'[^\x00-\x7F]+', '', text)
 
-def generate_improved_resume(original_resume_text, improvement_suggestions):
+def generate_improved_resume(original_resume_text, improvement_suggestions, job_description=None):
     """
-    Generate an improved version of the resume based on AI suggestions.
-    
+    Generate an improved version of the resume based on AI suggestions using Groq API.
     Args:
         original_resume_text (str): Original resume text
         improvement_suggestions (list): List of improvement suggestions from AI analysis
-        
+        job_description (str, optional): Job description for targeted improvements
     Returns:
         str: Path to the generated PDF file
     """
@@ -87,17 +90,16 @@ def generate_improved_resume(original_resume_text, improvement_suggestions):
                 formatted_suggestions += f"- {category}:\n  Current: {current}\n  Suggested: {suggested}\n\n"
         else:
             formatted_suggestions = "No specific suggestions provided. Please improve the general formatting, clarity, and professionalism of the resume."
-        
-        # Create a prompt for Gemini API to rewrite the resume
+
+        # Create a prompt for Groq API to rewrite the resume
+        job_desc_section = f"\nJOB DESCRIPTION:\n{job_description}" if job_description else ""
         prompt = f"""
         You are an expert resume writer. Rewrite the following resume by implementing these specific improvements:
-        
+        {job_desc_section}
         ORIGINAL RESUME:
         {original_resume_text}
-        
         IMPROVEMENTS TO IMPLEMENT:
         {formatted_suggestions}
-        
         Please rewrite the entire resume with these improvements while maintaining the same core information.
         Structure the resume in standard sections: Contact Information, Summary, Experience, Education, Skills.
         Use bullet points for accomplishments and make them quantifiable where possible.
@@ -105,73 +107,68 @@ def generate_improved_resume(original_resume_text, improvement_suggestions):
         Return ONLY the improved resume text with section headers, no additional explanations.
         Use only ASCII characters (no special quotes, dashes, etc.) to ensure compatibility with all systems.
         """
-        
-        # Get API key from Streamlit secrets 
+
+        # Get API key from Streamlit secrets
         try:
-            api_key = st.secrets["GEMINI_API_KEY"]
-            genai.configure(api_key=api_key)
+            api_key = st.secrets["GROQ_API_KEY"]
+            client = Groq(api_key=api_key)
         except Exception as e:
-            st.error(f"Error accessing API key: {str(e)}")
+            st.error(f"Error accessing Groq API key: {str(e)}")
             return None
-        
-        # Generate improved resume content using Gemini API
+
+        # Generate improved resume content using Groq API
         try:
-            model = genai.GenerativeModel('gemini-1.5-pro')
-            response = model.generate_content(prompt)
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert resume writer. Always respond with only the improved resume text, no additional text or formatting."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama3-8b-8192",
+                temperature=0.3,
+                max_tokens=4000,
+                top_p=0.9,
+                stream=False
+            )
+            improved_resume_text = chat_completion.choices[0].message.content
         except Exception as e:
-            st.error(f"Error generating content with Gemini API: {str(e)}")
+            st.error(f"Error generating content with Groq API: {str(e)}")
             st.error(traceback.format_exc())
             return None
-        
-        # Extract improved resume text
+
+        # Sanitize the text to handle problematic characters
         try:
-            improved_resume_text = ""
-            if hasattr(response, 'text'):
-                improved_resume_text = response.text
-            else:
-                improved_resume_text = str(response)
-            
-            # Sanitize the text to handle problematic characters
             improved_resume_text = sanitize_text(improved_resume_text)
-            
         except Exception as e:
-            st.error(f"Error extracting text from response: {str(e)}")
+            st.error(f"Error sanitizing improved resume text: {str(e)}")
             st.error(traceback.format_exc())
             return None
-        
+
         # Use simpler approach with plain text
         try:
             # Create a simple single-section PDF
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", size=11)
-            
-            # Set up page margins
             pdf.set_auto_page_break(auto=True, margin=15)
-            
-            # Add title
             pdf.set_font("Arial", 'B', size=16)
             pdf.cell(0, 10, "Improved Resume", ln=True, align='C')
             pdf.ln(5)
-            
-            # Reset font to normal
             pdf.set_font("Arial", size=11)
-            
-            # Convert the text to be PDF-compatible
-            # Split the text into lines to ensure proper line breaks
             pdf_text = improved_resume_text.encode('latin-1', 'replace').decode('latin-1')
-            
-            # Process each line, adding them to the PDF with proper formatting
             for line in pdf_text.split('\n'):
-                # Check if line is a header (all caps or ends with colon)
                 if line.isupper() or (line.strip().endswith(':') and len(line) < 30):
                     pdf.set_font("Arial", 'B', size=12)
-                    pdf.ln(3)  # Add some space before headers
+                    pdf.ln(3)
                     pdf.cell(0, 6, line, ln=True)
                     pdf.set_font("Arial", size=11)
-                    pdf.ln(2)  # Add some space after headers
+                    pdf.ln(2)
                 else:
-                    # Handle bullet points
                     if line.strip().startswith('•') or line.strip().startswith('-') or line.strip().startswith('*'):
                         indent = 5
                         pdf.set_x(pdf.get_x() + indent)
@@ -179,49 +176,32 @@ def generate_improved_resume(original_resume_text, improvement_suggestions):
                         pdf.multi_cell(width, 5, line)
                     else:
                         pdf.multi_cell(0, 5, line)
-            
-            # Save PDF to a temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_filepath = tmp_file.name
-            
             pdf.output(tmp_filepath)
             return tmp_filepath
-            
         except Exception as e:
             st.error(f"Error generating PDF: {str(e)}")
             st.error(traceback.format_exc())
-            
-            # Last resort - try with extremely basic PDF
             try:
                 pdf = FPDF()
                 pdf.add_page()
                 pdf.set_font("Arial", size=11)
-                
-                # Add only sanitized, basic ASCII text
                 basic_text = re.sub(r'[^\x00-\x7F]+', '', improved_resume_text)
-                
-                # Break into very short chunks to avoid any encoding issues
                 chunks = [basic_text[i:i+50] for i in range(0, len(basic_text), 50)]
-                
                 for chunk in chunks:
                     try:
                         pdf.cell(0, 5, chunk, ln=True)
                     except:
-                        # Skip any problematic chunks
                         continue
-                        
-                # Save PDF to a temporary file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                     tmp_filepath = tmp_file.name
-                
                 pdf.output(tmp_filepath)
                 st.warning("Could only generate a simplified version of the resume due to character encoding issues.")
                 return tmp_filepath
-                
             except Exception as final_e:
                 st.error("Failed to generate PDF.")
                 return None
-            
     except Exception as e:
         st.error(f"Unexpected error in generate_improved_resume: {str(e)}")
         st.error(traceback.format_exc())
